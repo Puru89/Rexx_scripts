@@ -1,0 +1,361 @@
+/*REXX*/
+/*
+***********************************************************************
+** NAME     - fileIO                                                 **
+**                                                                   **
+** FUNCTION - Demo of Cross platform File I/O                        **
+**            -Regina on Windows                                     **
+**            -IBM REXX under TSO                                    **
+**                                                                   **
+** USAGE    - You can run this Rexx on an IBM mainframe or on a PC   **
+**            with no code changes.                                  **
+**                                                                   **
+**            If you run fileIO on your PC, you should use Regina    **
+**            Rexx from:                                             **
+**                                                                   **
+**               http://regina-rexx.sourceforge.net                  **
+**                                                                   **
+**            If you run fileIO on your mainframe, you should use    **
+**            ftp to download the resulting files to your PC by:     **
+**                                                                   **
+**            ftp yourmainframe                                      **
+**            youruserid                                             **
+**            yourpassword                                           **
+**            quote site sbdataconn=(IBM-1047,ISO8859-1)             **
+**            get 'your.outfile'  your.outfile                       **
+**                                                                   **
+**            Alternatively, you can download your file to a PC and  **
+**            run the REXX on your PC by:                            **
+**                                                                   **
+**            regina fileIO.rexx your.infile outFolder               **
+**                                                                   **
+**            This will read your.infile and create                  **
+**                                        outfolder\your.outfile     **
+**                                                                   **
+** SYNTAX   - fileIO infile outfolder                                **
+**                                                                   **
+**            Where,                                                 **
+**            infile   = File containing input                       **
+**            outfolder= Output file path                            **
+***********************************************************************
+*/
+  parse arg sFileIn sFileOut
+  SAY '@@@1: ' sFileIn
+  SAY '@@@2: ' sFileOut
+
+  if sFileIn = ''
+  then do
+    say 'Syntax:'
+    say '   fileIO infile outfolder'
+    say
+    say 'Where:'
+    say '   infile   = Input file'
+    say '   outfolder  = Output folder name'
+    exit 1
+  end
+
+  say 'MSG001I Scanning input file:' sFileIn
+
+  g.!VERSION = sVersion
+  parse source g.!ENV .
+  say 'MSG002I Running under environment:' g.!ENV
+
+  if g.!ENV = 'TSO'
+  then do
+    address ISPEXEC
+    'CONTROL ERRORS RETURN'
+    g.!LINES = 0
+  end
+
+  call setFileNames sFileIn,sFileOut
+  say "Input file :" g.!INFILENAME
+  say "Output file:" g.!OUTFILENAME
+
+  call prolog
+  call scanInputFile
+  call epilog
+
+  say "End of processing!!"
+exit 0
+
+
+Prolog:
+  if g.!ENV = 'TSO'
+  then g.!LF = '15'x
+  else g.!LF = '0A'x
+
+  g.!UPPER = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+  g.!LOWER = 'abcdefghijklmnopqrstuvwxyz'
+
+  g.!LONGEST_LINE = 0
+return
+
+
+scanInputFile: procedure expose g.
+  g.!FILEIN    = openFile(g.!INFILENAME)
+  if (g.!RC <> 0) then do
+    say 'MSG003E Error opening input file' g.!INFILENAME '>:' g.!RC
+    exit 1
+  end
+
+  g.!FILEOUT   = openFile(g.!OUTFILENAME, 'OUTPUT')
+  if (g.!RC <> 0) then do
+    say 'MSG004E Error opening output file' g.!OUTFILENAME '>:' g.!RC
+    exit 1
+  end
+
+  g.!INLINENUM = 0 /* current line number in the inputfile */
+  g.!INDATA.0  = 0 /* number of lines of inputfile data */
+  longLineNum = 0
+  prevLongest = 0
+
+  sLine = getNextLine()
+  do while (g.!RC = 0)
+    /* Keep track of the longest line in the file - just for fun!!*/
+    prevLongest = g.!LONGEST_LINE
+    g.!LONGEST_LINE = max(g.!LONGEST_LINE,length(sLine))
+    if (g.!LONGEST_LINE > prevLongest) then
+      longLineNum = g.!INLINENUM
+
+    if g.!FILEOUT = ''
+      then say sLine
+    else
+      call putLine g.!FILEOUT,sLine
+
+    sLine = getNextLine()
+  end
+
+  rc = closeFile(g.!FILEIN)
+  rc = closeFile(g.!FILEOUT)
+
+  say "Number of Records Processed:" g.!INLINENUM
+  say "Longest line in the file is line number:" longLineNum 
+  say ",and its length is: " g.!LONGEST_LINE "Characters"
+return
+
+
+Epilog: procedure expose g.
+
+return
+
+toLower: procedure expose g.
+  parse arg sText
+return translate(sText,g.!LOWER,g.!UPPER)
+
+
+toUpper: procedure expose g.
+  parse upper arg sText
+return sText
+
+
+getNextLine: procedure expose g.
+  /*sLine = left(getLine(g.!FILEIN),71)*/
+  sLine = getLine(g.!FILEIN)
+  g.!INLINENUM = g.!INLINENUM + 1
+return sLine
+
+
+/* The input filename is supplied by the user.
+The name of the output file is automatically
+generated from the input file filename. The generated file names also
+depends on the operating system. Global variables are set as follows:
+g.!INFILENAME  = name of input file  (e.g. infile.txt)
+g.!OUTFILENAME = name of output file  (e.g. outfile.txt)
+*/
+setFileNames: procedure expose g.
+  parse arg sFileIn,sFileOut
+  if sFileOut = '' then sFileOut = sFileIn
+
+  if g.!ENV = 'TSO'
+  then do
+    g.!INFILENAME = toUpper(sFileIn)
+    parse var sFileOut sDataset'('sMember')'
+
+    /* dummy comment */
+    if (pos('(', sFileOut) > 0) /* if member name notation used */
+    then do /* output to members in the specified PDS */
+      if sMember = '' then sMember = 'OUT'
+      g.!OUTFILENAME = sDataset'('sMember')'
+    end
+    else do /* make output file a separate dataset */
+      g.!OUTFILENAME = sDataset'.out'
+    end
+  end
+  else do
+    sFileName  = getFilenameWithoutExtension(sFileIn)
+    parse var sFileName sFolderName'\'sMemberName
+
+    g.!INFILENAME = sFileIn
+    g.!OUTFILENAME = sFileOut'\'sMemberName'.out'
+  end
+return
+
+
+getFilenameWithoutExtension: procedure expose g.
+  parse arg sFile
+  nLastDot = lastpos('.',sFile)
+  if nLastDot > 1
+  then sFileName = substr(sFile,1,nLastDot-1)
+  else sFileName = sFile
+return sFileName
+
+
+/*===================================================================*/
+/*Cross Platform File I/O Library Routines                           */
+/*===================================================================*/
+/*-------------------------------------------------------------------*
+ * Open a file
+ *-------------------------------------------------------------------*/
+openFile: procedure expose g.
+  parse arg sFile,sOptions,sAttrs
+  hFile = ''
+  select
+    when g.!ENV = 'TSO' then do
+      bOutput = wordpos('OUTPUT',sOptions) > 0
+
+      bQuoted = left(sFile,1) = "'"
+      if bQuoted then sFile = strip(sFile,,"'")
+
+      parse var sFile sDataset'('sMember')'
+
+      if sMember <> '' then sFile = sDataset
+
+      if bQuoted then sFile = "'"sFile"'"
+
+      if bOutput
+      then 'LMINIT  DATAID(hFile) DATASET(&sFile) ENQ(EXCLU)'
+      else 'LMINIT  DATAID(hFile) DATASET(&sFile)'
+
+      if sMember <> ''
+      then do /* Open a member of a PDS */
+        'LMOPEN  DATAID(&hFile) OPTION(INPUT)' /* Input initially */
+        /* ... can't update ISPF stats when opened for output */
+        g.!MEMBER.hFile = sMember
+        'LMMFIND DATAID(&hFile) MEMBER('sMember') STATS(YES)'
+
+        if bOutput
+        then do
+          if rc = 0
+          then g.!STATS.hFile = zlvers','zlmod','zlc4date
+          else g.!STATS.hFile = '1,0,0000/00/00'
+          'LMCLOSE DATAID(&hFile)'
+          'LMOPEN  DATAID(&hFile) OPTION(&sOptions)'
+        end
+      end
+      else do /* Open a sequential dataset */
+        'LMOPEN  DATAID(&hFile) OPTION(&sOptions)'
+        if rc <> 0 /* If dataset does not already exist... */
+        then do /* Create sequential dataset then open it */
+          'LMCLOSE DATAID(&hFile)'
+          'LMFREE  DATAID(&hFile)'
+          address TSO 'ALLOCATE DATASET('sFile') NEW CATALOG',
+                      'SPACE(5,15) TRACKS RECFM(V,B)',
+                      'LRECL('80 + 4')',
+                      'BLKSIZE(27990)' sAttrs
+          if bOutput
+          then do
+            'LMINIT  DATAID(hFile) DATASET(&sFile) ENQ(EXCLU)'
+            'LMOPEN  DATAID(&hFile) OPTION(&sOptions)'
+          end
+          else do
+            'LMINIT  DATAID(hFile) DATASET(&sFile)'
+            'LMOPEN  DATAID(&hFile) OPTION(INPUT)'
+          end
+        end
+      end
+      g.!OPTIONS.hFile = sOptions
+      g.!rc = rc /* Return code from LMOPEN */
+    end
+    otherwise do /*Non-TSO environment*/
+      if wordpos('OUTPUT',sOptions) > 0
+      then junk = stream(sFile,'COMMAND','OPEN WRITE REPLACE')
+      else junk = stream(sFile,'COMMAND','OPEN READ')
+
+      hFile = sFile
+      if stream(sFile,'STATUS') = 'READY'
+      then g.!rc = 0
+      else g.!rc = 4
+    end
+  end
+return hFile
+
+
+/*-------------------------------------------------------------------*
+ * Read a line from the specified file
+ *-------------------------------------------------------------------*/
+getLine: procedure expose g.
+  parse arg hFile
+  sLine = ''
+  select
+    when g.!ENV = 'TSO' then do
+      'LMGET DATAID(&hFile) MODE(INVAR)',
+            'DATALOC(sLine) DATALEN(nLine) MAXLEN(32768)'
+      g.!rc = rc
+      sLine = strip(sLine,'TRAILING')
+      if sLine = '' then sLine = ' '
+    end
+    when g.!ENV = 'WIN32' || g.!ENV = 'UNIX' then do
+      g.!rc = 0
+      if chars(hFile) > 0
+      then sLine = linein(hFile)
+      else g.!rc = 4
+    end
+    otherwise g.!rc = 4
+  end
+return sLine
+
+
+/*-------------------------------------------------------------------*
+ * Append a line to the specified file
+ *-------------------------------------------------------------------*/
+putLine: procedure expose g.
+  parse arg hFile,sLine
+  select
+    when g.!ENV = 'TSO' then do
+      g.!LINES = g.!LINES + 1
+      'LMPUT DATAID(&hFile) MODE(INVAR)',
+            'DATALOC(sLine) DATALEN('length(sLine)')'
+    end
+    otherwise do
+      junk = lineout(hFile,sLine)
+      rc = 0
+    end
+  end
+return rc
+
+
+/*-------------------------------------------------------------------*
+ * Close the specified file
+ *-------------------------------------------------------------------*/
+closeFile: procedure expose g.
+  parse arg hFile
+  rc = 0
+  select
+    when g.!ENV = 'TSO' then do
+      if g.!MEMBER.hFile <> '', /* if its a PDS */
+      & wordpos('OUTPUT',g.!OPTIONS.hFile) > 0 /* opened for output */
+      then do
+        parse value date('STANDARD') with yyyy +4 mm +2 dd +2
+        parse var g.!STATS.hFile zlvers','zlmod','zlc4date
+        zlcnorc  = min(g.!LINES,65535)   /* Number of lines   */
+        nVer = right(zlvers,2,'0')right(zlmod,2,'0')  /* vvmm */
+        nVer = right(nVer+1,4,'0')       /* vvmm + 1          */
+        parse var nVer zlvers +2 zlmod +2
+        if zlc4date = '0000/00/00'
+        then zlc4date = yyyy'/'mm'/'dd   /* Creation date     */
+        zlm4date = yyyy'/'mm'/'dd        /* Modification date */
+        zlmtime  = time()                /* Modification time */
+        zluser   = userid()              /* Modification user */
+        'LMMREP DATAID(&hFile) MEMBER('g.!MEMBER.hFile') STATS(YES)'
+      end
+      'LMCLOSE DATAID(&hFile)'
+      'LMFREE  DATAID(&hFile)'
+    end
+    otherwise do
+      if stream(hFile,'COMMAND','CLOSE') = 'UNKNOWN'
+      then rc = 0
+      else rc = 4
+    end
+  end
+return rc
+
